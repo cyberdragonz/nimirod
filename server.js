@@ -208,16 +208,109 @@ app.post('/v1/chat/completions', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Proxy error:', error.message);
-    
-    res.status(error.response?.status || 500).json({
+  console.error('Proxy error:', error.message);
+
+  const status = error.response?.status || 500;
+  const data = error.response?.data || {};
+  const headers = error.response?.headers || {};
+
+  // Enhanced 429 handling
+  if (status === 429) {
+    const retryAfter =
+      headers['retry-after'] ||
+      headers['x-ratelimit-reset'] ||
+      null;
+
+    const remainingRequests =
+      headers['x-ratelimit-remaining-requests'];
+
+    const remainingTokens =
+      headers['x-ratelimit-remaining-tokens'];
+
+    const limitRequests =
+      headers['x-ratelimit-limit-requests'];
+
+    const limitTokens =
+      headers['x-ratelimit-limit-tokens'];
+
+    const requestId =
+      headers['x-request-id'] ||
+      headers['request-id'];
+
+    // Try to infer the reason
+    let rateLimitType = 'rate_limit_exceeded';
+
+    const upstreamMessage =
+      data?.error?.message ||
+      data?.message ||
+      error.message ||
+      '';
+
+    const lowerMsg = upstreamMessage.toLowerCase();
+
+    if (
+      lowerMsg.includes('quota') ||
+      lowerMsg.includes('billing')
+    ) {
+      rateLimitType = 'quota_exceeded';
+    } else if (
+      lowerMsg.includes('concurrent') ||
+      lowerMsg.includes('too many requests in progress')
+    ) {
+      rateLimitType = 'concurrency_limit';
+    }
+
+    return res.status(429).json({
       error: {
-        message: error.message || 'Internal server error',
-        type: 'invalid_request_error',
-        code: error.response?.status || 500
+        message: 'NVIDIA NIM rate limit exceeded',
+        type: rateLimitType,
+        code: 429,
+
+        details: {
+          upstream_message: upstreamMessage,
+          retry_after: retryAfter,
+          request_id: requestId,
+
+          limits: {
+            requests_limit: limitRequests || null,
+            requests_remaining: remainingRequests || null,
+            tokens_limit: limitTokens || null,
+            tokens_remaining: remainingTokens || null
+          },
+
+          suggestions: [
+            'Reduce request frequency',
+            'Lower max_tokens',
+            'Retry with exponential backoff',
+            'Use a smaller model',
+            'Enable request queueing'
+          ]
+        }
       }
     });
   }
+
+  // Generic error handling
+  res.status(status).json({
+    error: {
+      message:
+        data?.error?.message ||
+        data?.message ||
+        error.message ||
+        'Internal server error',
+
+      type:
+        data?.error?.type ||
+        'invalid_request_error',
+
+      code: status,
+
+      details: {
+        upstream: data || null
+      }
+    }
+  });
+}
 });
 
 // Catch-all for unsupported endpoints
