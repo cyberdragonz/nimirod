@@ -27,8 +27,8 @@ const NIM_API_BASE =
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
 // Toggles
-const SHOW_REASONING = false;
-const ENABLE_THINKING_MODE = false;
+const SHOW_REASONING = true;
+const ENABLE_THINKING_MODE = true;
 
 // Model mapping
 const MODEL_MAPPING = {
@@ -81,7 +81,7 @@ function createNimRequest(body, nimModel) {
   };
 
   // thinking mode can freeze some DeepSeek variants
-  if (ENABLE_THINKING_MODE && !isDeepSeek) {
+  if (ENABLE_THINKING_MODE) {
     request.extra_body = {
       chat_template_kwargs: {
         thinking: true
