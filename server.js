@@ -27,8 +27,8 @@ const NIM_API_BASE =
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
 // Toggles
-const SHOW_REASONING = true;
-const ENABLE_THINKING_MODE = true;
+const SHOW_REASONING = false;
+const ENABLE_THINKING_MODE = false;
 
 // Model mapping
 const MODEL_MAPPING = {
@@ -75,7 +75,7 @@ function createNimRequest(body, nimModel) {
     temperature: body.temperature ?? 0.6,
 
     // safer defaults
-    max_tokens: Math.min(body.max_tokens || 4096, 8192),
+    max_tokens: Math.min(body.max_tokens || 1024, 4096),
 
     stream: !!body.stream
   };
@@ -342,7 +342,7 @@ app.post(
             : 'json',
 
           // prevents hanging forever
-          timeout: 1000 * 10
+          timeout: 1000 * 60
         }
       );
 
