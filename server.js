@@ -34,7 +34,7 @@ const ENABLE_THINKING_MODE = false;
 const MODEL_MAPPING = {
   deepseek: 'deepseek-ai/deepseek-v4-pro',
   'deepseek-flash': 'deepseek-ai/deepseek-v4-flash',
-  'gpt-oss': 'gpt-oss-120b'
+  'gpt-oss': 'openai/gpt-oss-120b'
 };
 
 // --------------------------------------------------
