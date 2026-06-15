@@ -36,7 +36,8 @@ const MODEL_MAPPING = {
   'deepseek-flash': 'deepseek-ai/deepseek-v4-flash',
   'gpt-oss': 'openai/gpt-oss-120b',
   'glm': 'z-ai/glm-5.1',
-  'kimi': 'moonshotai/kimi-k2.6'
+  'kimi': 'moonshotai/kimi-k2.6',
+  'step': 'stepfun-ai/step-3.5-flash'
 };
 
 // --------------------------------------------------
