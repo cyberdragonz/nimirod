@@ -346,7 +346,7 @@ app.post(
             : 'json',
 
           // prevents hanging forever
-          timeout: 1000 * 129
+          timeout: 1000 * 256
         }
       );
 
