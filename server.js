@@ -320,81 +320,146 @@ function handleStreamingResponse(
 // Chat completions
 // --------------------------------------------------
 
-app.post('/v1/chat/completions', async (req, res) => {
-  const { model = "echo", messages = [], stream = false } = req.body;
-
-  const systemMessage =
-    messages.find(m => m.role === "system")?.content || "";
-
-  // Streaming response
-  if (stream) {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    res.write(
-      `data: ${JSON.stringify({
-        id: `chatcmpl-${Date.now()}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
+app.post(
+  '/v1/chat/completions',
+  async (req, res) => {
+    try {
+      const {
         model,
-        choices: [
-          {
-            index: 0,
-            delta: {
-              role: "assistant",
-              content: systemMessage
-            },
-            finish_reason: null
-          }
-        ]
-      })}\n\n`
-    );
+        stream = false
+      } = req.body;
 
-    res.write(
-      `data: ${JSON.stringify({
-        id: `chatcmpl-${Date.now()}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [
-          {
-            index: 0,
-            delta: {},
-            finish_reason: "stop"
-          }
-        ]
-      })}\n\n`
-    );
+      const nimModel =
+        resolveModel(model);
 
-    res.write("data: [DONE]\n\n");
-    return res.end();
-  }
+      const nimRequest =
+        createNimRequest(
+          req.body,
+          nimModel
+        );
 
-  // Non-streaming response
-  return res.json({
-    id: `chatcmpl-${Date.now()}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content: systemMessage
-        },
-        finish_reason: "stop"
+      const response = await axios.post(
+        `${NIM_API_BASE}/chat/completions`,
+        nimRequest,
+        {
+          headers: {
+            Authorization: `Bearer ${NIM_API_KEY}`,
+            'Content-Type':
+              'application/json'
+          },
+
+          responseType: stream
+            ? 'stream'
+            : 'json',
+
+          // prevents hanging forever
+          timeout: 1000 * 256
+        }
+      );
+
+      // streaming
+      if (stream) {
+        return handleStreamingResponse(
+          req,
+          res,
+          response.data
+        );
       }
-    ],
-    usage: {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0
-    }
-  });
-});
 
+      // normal response
+      const openaiResponse =
+        buildOpenAIResponse(
+          model,
+          response.data
+        );
+
+      return res.json(openaiResponse);
+    } catch (error) {
+      console.error(
+        'Proxy error:',
+        error.message
+      );
+
+      const status =
+        error.response?.status || 500;
+
+      const data =
+        error.response?.data || {};
+
+      const headers =
+        error.response?.headers || {};
+
+      // ------------------------------------------
+      // 429 handling
+      // ------------------------------------------
+
+      if (status === 429) {
+        return res.status(429).json({
+          error: {
+            message:
+              'NVIDIA NIM rate limit exceeded',
+
+            type:
+              'rate_limit_exceeded',
+
+            code: 429,
+
+            details: {
+              retry_after:
+                headers['retry-after'] ||
+                null,
+
+              request_id:
+                headers['x-request-id'] ||
+                null,
+
+              limits: {
+                requests_remaining:
+                  headers[
+                    'x-ratelimit-remaining-requests'
+                  ] || null,
+
+                tokens_remaining:
+                  headers[
+                    'x-ratelimit-remaining-tokens'
+                  ] || null
+              },
+
+              upstream:
+                data?.error?.message ||
+                data?.message ||
+                null
+            }
+          }
+        });
+      }
+
+      // ------------------------------------------
+      // generic errors
+      // ------------------------------------------
+
+      return res.status(status).json({
+        error: {
+          message:
+            data?.error?.message ||
+            data?.message ||
+            error.message ||
+            'Internal server error',
+
+          type:
+            data?.error?.type ||
+            'invalid_request_error',
+
+          code: status,
+
+          details: {
+            upstream: data || null
+          }
+        }
+      });
+    }
+  }
+);
 
 // --------------------------------------------------
 // Catch-all
