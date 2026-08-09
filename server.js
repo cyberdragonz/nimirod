@@ -40,7 +40,7 @@ const ENABLE_THINKING_MODE = false;
 // Model mapping
 const MODEL_MAPPING = {
   deepseek: 'deepseek-ai/deepseek-v4-pro',
-  'deepseek-flash': 'deepseek-ai/deepseek-v4-flash',
+  'deepseek-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'gpt-oss': 'openai/gpt-oss-120b',
   'glm': 'z-ai/glm-5.2',
   'kimi': 'moonshotai/kimi-k2.6',
