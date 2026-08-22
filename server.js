@@ -46,7 +46,7 @@ const MODEL_MAPPING = {
   'kimi': 'moonshotai/kimi-k2.6',
   'step': 'stepfun-ai/step-3.5-flash',
   'minimax': 'minimaxai/minimax-m3',
-  'inkling': "thinkingmachines/inkling'
+  'inkling': 'thinkingmachines/inkling'
 };
 
 // --------------------------------------------------
