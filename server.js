@@ -53,7 +53,7 @@ const MODEL_MAPPING = {
   'minimax': 'minimaxai/minimax-m3',
   'inkling': 'thinkingmachines/inkling',
   'nemotron-3-ultra': 'nvidia/nemotron-3-ultra-550b-a55b',
-  'nemotrom-3.5-lightning': 'nvidia/nemotron-3.5-lightning-30b-a3b'
+  'nemotron-3.5-lightning': 'nvidia/nemotron-3.5-lightning-30b-a3b'
 };
 
 // --------------------------------------------------
