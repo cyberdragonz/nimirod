@@ -48,7 +48,7 @@ function createNimRequest(body, nimModel) {
     temperature: body.temperature ?? 0.6,
 
     // safer defaults
-    max_tokens: Math.min(body.max_tokens || 4096, 8192),
+    max_tokens: Math.min(body.max_tokens || 4096, 65536),
 
     stream: !!body.stream
   };
