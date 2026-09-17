@@ -55,7 +55,7 @@ function createNimRequest(body, nimModel) {
 
   // thinking mode can freeze some DeepSeek variants
   if (ENABLE_THINKING_MODE) {
-    request.chat_template_kwargs: {
+    request.chat_template_kwargs = {
         thinking: true
     };
   }
