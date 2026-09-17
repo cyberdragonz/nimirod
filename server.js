@@ -58,6 +58,10 @@ function createNimRequest(body, nimModel) {
     request.chat_template_kwargs = {
         thinking: true
     };
+  } {
+    request.chat_template_kwargs = {
+        thinking: false
+    };
   }
 
   return request;
