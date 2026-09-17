@@ -7,6 +7,11 @@
 // - proper stream cleanup
 // - safer max_tokens defaults
 // - improved 429 handling
+// - FIX: no longer crashes when an upstream error arrives on a
+//        streaming request (axios returns a raw stream/socket as
+//        error.response.data in that case, and passing that
+//        straight into res.json() threw "Converting circular
+//        structure to JSON" and killed the process)
 
 const express = require('express');
 const cors = require('cors');
@@ -141,6 +146,63 @@ function buildOpenAIResponse(originalModel, data) {
       total_tokens: 0
     }
   };
+}
+
+// --------------------------------------------------
+// Error helpers (the actual fix)
+// --------------------------------------------------
+
+// Detects a Node stream / IncomingMessage (has .pipe and .on).
+// axios hands back a raw stream as error.response.data whenever the
+// original request was made with responseType: 'stream' and the
+// upstream returned a non-2xx status. That object holds a live
+// socket internally, which is circular and will crash JSON.stringify.
+function isStream(obj) {
+  return !!obj && typeof obj.pipe === 'function' && typeof obj.on === 'function';
+}
+
+// Always returns a plain, JSON-safe value (object, string, or null) -
+// never the raw stream/socket object.
+async function extractErrorData(error) {
+  const raw = error.response?.data;
+
+  if (!raw) return null;
+
+  if (!isStream(raw)) {
+    // Non-streaming request: axios already parsed this as JSON.
+    return raw;
+  }
+
+  // Streaming request that errored: drain the stream ourselves.
+  try {
+    const chunks = [];
+    for await (const chunk of raw) {
+      chunks.push(chunk);
+    }
+    const text = Buffer.concat(chunks).toString('utf8');
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Upstream didn't send JSON - return as plain text instead.
+      return { raw: text.slice(0, 2000) };
+    }
+  } catch (drainErr) {
+    return { message: 'Failed to read upstream error stream: ' + drainErr.message };
+  }
+}
+
+// Safe wrapper around res.json() so a future unexpected/circular
+// payload degrades gracefully instead of taking the whole process down.
+function safeJson(res, status, payload) {
+  try {
+    return res.status(status).json(payload);
+  } catch (e) {
+    console.error('safeJson serialization failed:', e.message);
+    return res.status(status).json({
+      error: { message: 'Internal error building response' }
+    });
+  }
 }
 
 // --------------------------------------------------
@@ -376,7 +438,7 @@ app.post(
           response.data
         );
 
-      return res.json(openaiResponse);
+      return safeJson(res, 200, openaiResponse);
     } catch (error) {
       console.error(
         'Proxy error:',
@@ -386,18 +448,20 @@ app.post(
       const status =
         error.response?.status || 500;
 
-      const data =
-        error.response?.data || {};
-
       const headers =
         error.response?.headers || {};
+
+      // IMPORTANT: this must be awaited and must never be the raw
+      // error.response.data when the request was streaming - see
+      // extractErrorData() above for why.
+      const data = await extractErrorData(error);
 
       // ------------------------------------------
       // 429 handling
       // ------------------------------------------
 
       if (status === 429) {
-        return res.status(429).json({
+        return safeJson(res, 429, {
           error: {
             message:
               'NVIDIA NIM rate limit exceeded',
@@ -441,7 +505,7 @@ app.post(
       // generic errors
       // ------------------------------------------
 
-      return res.status(status).json({
+      return safeJson(res, status, {
         error: {
           message:
             data?.error?.message ||
@@ -476,6 +540,21 @@ app.all('*', (req, res) => {
       code: 404
     }
   });
+});
+
+// --------------------------------------------------
+// Process-level safety nets
+// --------------------------------------------------
+// Even with the fix above, a proxy talking to a third-party API
+// should never let one bad response take the whole server down.
+// These log the problem instead of crashing the container.
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
 });
 
 // --------------------------------------------------
