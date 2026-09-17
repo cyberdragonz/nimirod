@@ -7,11 +7,6 @@
 // - proper stream cleanup
 // - safer max_tokens defaults
 // - improved 429 handling
-// - FIX: no longer crashes when an upstream error arrives on a
-//        streaming request (axios returns a raw stream/socket as
-//        error.response.data in that case, and passing that
-//        straight into res.json() threw "Converting circular
-//        structure to JSON" and killed the process)
 
 const express = require('express');
 const cors = require('cors');
@@ -22,14 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json({
-  limit: '50mb'
-}));
-
-app.use(express.urlencoded({
-  extended: true,
-  limit: '50mb'
-}));
+app.use(express.json());
 
 // NVIDIA NIM config
 const NIM_API_BASE =
@@ -39,51 +27,16 @@ const NIM_API_BASE =
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
 // Toggles
-const SHOW_REASONING = false;
-const ENABLE_THINKING_MODE = false;
-
-// Model mapping
-const MODEL_MAPPING = {
-  deepseek: 'deepseek-ai/deepseek-v4-pro-0813',
-  'deepseek-flash': 'deepseek-ai/deepseek-v4-flash-0731',
-  'gpt-oss': 'openai/gpt-oss-120b',
-  'glm': 'z-ai/glm-5.3',
-  'kimi': 'moonshotai/kimi-k3',
-  'step': 'stepfun-ai/step-3.5-flash',
-  'minimax': 'minimaxai/minimax-m3',
-  'inkling': 'thinkingmachines/inkling',
-  'nemotron-3-ultra': 'nvidia/nemotron-3-ultra-550b-a55b',
-  'nemotron-3.5-lightning': 'nvidia/nemotron-3.5-lightning-30b-a3b'
-};
+const SHOW_REASONING = true;
+const ENABLE_THINKING_MODE = true;
 
 // --------------------------------------------------
 // Helpers
 // --------------------------------------------------
 
 function resolveModel(model = '') {
-  if (MODEL_MAPPING[model]) {
-    return MODEL_MAPPING[model];
-  }
-
-  const modelLower = model.toLowerCase();
-
-  if (
-    modelLower.includes('gpt-4') ||
-    modelLower.includes('claude-opus') ||
-    modelLower.includes('405b')
-  ) {
-    return 'meta/llama-3.1-405b-instruct';
-  }
-
-  if (
-    modelLower.includes('claude') ||
-    modelLower.includes('gemini') ||
-    modelLower.includes('70b')
-  ) {
-    return 'meta/llama-3.1-70b-instruct';
-  }
-
-  return 'meta/llama-3.1-8b-instruct';
+  // pass the requested model straight through to NIM
+  return model;
 }
 
 function createNimRequest(body, nimModel) {
@@ -95,7 +48,7 @@ function createNimRequest(body, nimModel) {
     temperature: body.temperature ?? 0.6,
 
     // safer defaults
-    max_tokens: Math.min(body.max_tokens || 1024, 4096),
+    max_tokens: Math.min(body.max_tokens || 4096, 8192),
 
     stream: !!body.stream
   };
@@ -150,63 +103,6 @@ function buildOpenAIResponse(originalModel, data) {
 }
 
 // --------------------------------------------------
-// Error helpers (the actual fix)
-// --------------------------------------------------
-
-// Detects a Node stream / IncomingMessage (has .pipe and .on).
-// axios hands back a raw stream as error.response.data whenever the
-// original request was made with responseType: 'stream' and the
-// upstream returned a non-2xx status. That object holds a live
-// socket internally, which is circular and will crash JSON.stringify.
-function isStream(obj) {
-  return !!obj && typeof obj.pipe === 'function' && typeof obj.on === 'function';
-}
-
-// Always returns a plain, JSON-safe value (object, string, or null) -
-// never the raw stream/socket object.
-async function extractErrorData(error) {
-  const raw = error.response?.data;
-
-  if (!raw) return null;
-
-  if (!isStream(raw)) {
-    // Non-streaming request: axios already parsed this as JSON.
-    return raw;
-  }
-
-  // Streaming request that errored: drain the stream ourselves.
-  try {
-    const chunks = [];
-    for await (const chunk of raw) {
-      chunks.push(chunk);
-    }
-    const text = Buffer.concat(chunks).toString('utf8');
-
-    try {
-      return JSON.parse(text);
-    } catch {
-      // Upstream didn't send JSON - return as plain text instead.
-      return { raw: text.slice(0, 2000) };
-    }
-  } catch (drainErr) {
-    return { message: 'Failed to read upstream error stream: ' + drainErr.message };
-  }
-}
-
-// Safe wrapper around res.json() so a future unexpected/circular
-// payload degrades gracefully instead of taking the whole process down.
-function safeJson(res, status, payload) {
-  try {
-    return res.status(status).json(payload);
-  } catch (e) {
-    console.error('safeJson serialization failed:', e.message);
-    return res.status(status).json({
-      error: { message: 'Internal error building response' }
-    });
-  }
-}
-
-// --------------------------------------------------
 // Health
 // --------------------------------------------------
 
@@ -222,19 +118,35 @@ app.get('/health', (req, res) => {
 // --------------------------------------------------
 // Models
 // --------------------------------------------------
+// No local model list anymore since models pass straight through.
+// Proxy to NIM's own /v1/models list instead.
 
-app.get('/v1/models', (req, res) => {
-  const models = Object.keys(MODEL_MAPPING).map(model => ({
-    id: model,
-    object: 'model',
-    created: Date.now(),
-    owned_by: 'nvidia-nim-proxy'
-  }));
+app.get('/v1/models', async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${NIM_API_BASE}/models`,
+      {
+        headers: {
+          Authorization: `Bearer ${NIM_API_KEY}`
+        }
+      }
+    );
 
-  res.json({
-    object: 'list',
-    data: models
-  });
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      'Models fetch error:',
+      error.message
+    );
+
+    res.status(500).json({
+      error: {
+        message: 'Failed to fetch models from NIM',
+        type: 'internal_error',
+        code: 500
+      }
+    });
+  }
 });
 
 // --------------------------------------------------
@@ -419,7 +331,7 @@ app.post(
             : 'json',
 
           // prevents hanging forever
-          timeout: 1000 * 256
+          timeout: 1000 * 60 * 5
         }
       );
 
@@ -439,7 +351,7 @@ app.post(
           response.data
         );
 
-      return safeJson(res, 200, openaiResponse);
+      return res.json(openaiResponse);
     } catch (error) {
       console.error(
         'Proxy error:',
@@ -449,20 +361,18 @@ app.post(
       const status =
         error.response?.status || 500;
 
+      const data =
+        error.response?.data || {};
+
       const headers =
         error.response?.headers || {};
-
-      // IMPORTANT: this must be awaited and must never be the raw
-      // error.response.data when the request was streaming - see
-      // extractErrorData() above for why.
-      const data = await extractErrorData(error);
 
       // ------------------------------------------
       // 429 handling
       // ------------------------------------------
 
       if (status === 429) {
-        return safeJson(res, 429, {
+        return res.status(429).json({
           error: {
             message:
               'NVIDIA NIM rate limit exceeded',
@@ -506,7 +416,7 @@ app.post(
       // generic errors
       // ------------------------------------------
 
-      return safeJson(res, status, {
+      return res.status(status).json({
         error: {
           message:
             data?.error?.message ||
@@ -541,21 +451,6 @@ app.all('*', (req, res) => {
       code: 404
     }
   });
-});
-
-// --------------------------------------------------
-// Process-level safety nets
-// --------------------------------------------------
-// Even with the fix above, a proxy talking to a third-party API
-// should never let one bad response take the whole server down.
-// These log the problem instead of crashing the container.
-
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', reason);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
 });
 
 // --------------------------------------------------
