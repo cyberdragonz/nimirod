@@ -28,7 +28,7 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 
 // Toggles
 const SHOW_REASONING = true;
-const ENABLE_THINKING_MODE = true;
+const ENABLE_THINKING_MODE = false;
 
 // --------------------------------------------------
 // Helpers
